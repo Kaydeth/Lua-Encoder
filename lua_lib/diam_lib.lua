@@ -11,6 +11,7 @@
 local diam = {};
 
 local utils = require "utils_lib";
+local _3gpp = require "diam_3gpp_lib";
 
 local DIAM_VERSION = 1;
 
@@ -46,7 +47,7 @@ diam.avp_codes.DESTINATION_REALM = 283;
 diam.avp_codes.PROXY_INFO = 284;
 diam.avp_codes.REDIRECT_HOST = 292;
 diam.avp_codes.DESTINATION_HOST = 293;
-diam.avp_codes.ERROR_REPORTING_HOST = 293;
+diam.avp_codes.ERROR_REPORTING_HOST = 294;
 diam.avp_codes.ORIGIN_REALM = 296;
 diam.avp_codes.EXPERIMENTAL_RESULT = 297;
 diam.avp_codes.EXPERIMENTAL_RESULT_CODE = 298;
@@ -56,10 +57,11 @@ diam.avp_codes.CC_REQUEST_TYPE = 416;
 diam.avp_codes.SUBSCRIPTION_ID = 443;
 diam.avp_codes.SUBSCRIPTION_ID_DATA = 444;
 diam.avp_codes.SUBSCRIPTION_ID_TYPE = 450;
-diam.avp_codes.SUPPORTED_FEATURES = 628;
-diam.avp_codes.EPS_LOCATION_INFORMATION = 1496;
+--diam.avp_codes.SUPPORTED_FEATURES = 628;
+--diam.avp_codes.EPS_LOCATION_INFORMATION = 1496;
 
 diam.vendor_avp_dict = {};
+diam.vendor_avp_dict[_3gpp.VENDOR_ID_3GPP] = _3gpp.avp_dict;
 
 diam.avp_dict = {};
 diam.avp_dict[diam.avp_codes.USER_NAME] =
@@ -124,10 +126,10 @@ diam.avp_dict[diam.avp_codes.SUBSCRIPTION_ID_DATA] =
 	{name = "Subscription-Id-Data", data_type = "string", flags = diam.MANDATORY_FLAG};
 diam.avp_dict[diam.avp_codes.SUBSCRIPTION_ID_TYPE] =
 	{name = "Subscription-Id-Type", data_type = "int32", flags = diam.MANDATORY_FLAG};
-diam.avp_dict[diam.avp_codes.SUPPORTED_FEATURES] =
-	{name = "Supported-Features", data_type = "grouped", flags = diam.VENDOR_AND_MAN_FLAG};
-diam.avp_dict[diam.avp_codes.EPS_LOCATION_INFORMATION] =
-	{name = "EPS-Location-Information", data_type = "grouped", flags = diam.VENDOR_FLAG};
+--diam.avp_dict[diam.avp_codes.SUPPORTED_FEATURES] =
+--	{name = "Supported-Features", data_type = "grouped", flags = diam.VENDOR_AND_MAN_FLAG};
+--diam.avp_dict[diam.avp_codes.EPS_LOCATION_INFORMATION] =
+--	{name = "EPS-Location-Information", data_type = "grouped", flags = diam.VENDOR_FLAG};
 
 function diam.recv_msg_decode(fd, type)
 	local WATCH_DOG = 280;
@@ -272,7 +274,13 @@ function diam.create_avp(avp_code, value, vendor_id)
 end
 
 function diam.find_avp_value (message, avp_code)
-	for k,v in ipairs(message.avps) do
+	local search = message.avps;
+
+	if( search == nil ) then
+		search = message.value;
+	end
+
+	for k,v in ipairs(search) do
 		if( v.avp_code == avp_code) then
 			return v.value;
 		end
@@ -282,7 +290,13 @@ function diam.find_avp_value (message, avp_code)
 end
 
 function diam.find_avp(message, avp_code)
-	for k,v in ipairs(message.avps) do
+	local search = message.avps;
+
+	if( search == nil ) then
+		search = message.value;
+	end
+
+	for k,v in ipairs(search) do
 		--print("LSDEBUG: find avp at key/code " .. k .. "/" .. v.avp_code);
 		if( v.avp_code == avp_code) then
 			--print("LSDEBUG: return found avp");
@@ -385,8 +399,8 @@ function diam.decode_avp(bytes, i)
 		i = i + 4;
 	end
 
---	print("LSDEBUG: found AVP ".. avp.avp_code);
-	local data_type = diam.lookup_avp(avp.avp_code);
+	--print("LSDEBUG: found AVP ".. avp.avp_code);
+	local data_type = diam.lookup_avp(avp.avp_code, avp.vendor_id);
 
 	if( data_type ~= nil) then
 		if( data_type == "string" ) then
@@ -400,31 +414,21 @@ function diam.decode_avp(bytes, i)
 			avp.value = utils.getU32(bytes, i);
 		elseif( data_type == "grouped" ) then
 			--A grouped avp is decoded into a list of AVPs
---			avp.value = {}
---			
---			print("LSDEUBG: group start is ".. start);
---			print("LSDEBUG: group avp length is " .. avp.length);
---			local child_avp_count = 1;
---			while( i < start + avp.length) do
---				print("Data start is " .. i);
---				local child_avp = diam.decode_avp(bytes, i);
---				i = i + avp.length;
---		
---				--skip padding bytes
---				local fmod = math.fmod(avp.length, 4);
---				if( fmod ~= 0 ) then
---					i = i + 4 - fmod;
---				end
---		
---				avp.value[child_avp_count] = avp;
---				child_avp_count = child_avp_count + 1;
---			end
-			
-			avp.data = {};
-			
-			local data_start = i - 1;
-			for i=i, start + avp.length - 1, 1 do
-				avp.data[i - data_start] = bytes[i];
+			avp.value = {}
+
+			local child_avp_count = 1;
+			while( i < start + avp.length) do
+				local child_avp = diam.decode_avp(bytes, i);
+				i = i + child_avp.length;
+		
+				--skip padding bytes
+				local fmod = math.fmod(child_avp.length, 4);
+				if( fmod ~= 0 ) then
+					i = i + 4 - fmod;
+				end
+		
+				avp.value[child_avp_count] = child_avp;
+				child_avp_count = child_avp_count + 1;
 			end
 		else
 			error("invalid avp data type, data_type = " .. data_type);
@@ -545,7 +549,7 @@ function diam.encode(message)
 
 	if(type(message.avps) == "table") then
 		for i,avp in ipairs(message.avps) do 
-				encode_avp(bytes, avp, app_id, com_code)
+			encode_avp(bytes, avp, app_id, com_code)
 		end
 	end
 
@@ -701,7 +705,6 @@ function encode_avp(bytes, avp, app_id, com_code)
 				padding_length = 2;
 				
 			elseif( dict_entry.data_type == "grouped") then
-
 				for i, child_avp in ipairs(avp.value) do
 					avp_length = avp_length + 
 						encode_avp(bytes, child_avp, app_id, com_code);
@@ -739,12 +742,30 @@ function diam.add_avp_padding(bytes, avp_length)
 	return bytes_padded;
 end
 
-function diam.lookup_avp(avp_code)
-	if( diam.avp_dict[avp_code] ) then
-		return diam.avp_dict[avp_code].data_type;
+function diam.lookup_avp(avp_code, vendor_id)
+
+	local avp_table = diam.avp_dict;
+
+	if(vendor_id ~= nil) then
+		avp_table = diam.vendor_avp_dict[vendor_id];
+	end
+
+	if( avp_table ~= nil and avp_table[avp_code] ) then
+		return avp_table[avp_code].data_type;
 	end
 
 	return nil
+end
+
+function diam.print_avp(avp)
+	local dict = diam.lookup_avp(avp.avp_code, avp.vendor_id);
+
+	if( dict ~= nil) then
+		print(dict.name);
+	else
+		print(string.format("Unknown AVP %d:%s", avp.avp_code,
+			tostring(avp.vendor_id)));
+	end
 end
 
 function diam.print_message(message)
